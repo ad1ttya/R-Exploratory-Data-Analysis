@@ -1,0 +1,207 @@
+---
+title: "Using Tidyverse to analyze Pew Research Center Survey data"
+output: 
+   prettydoc::html_pretty:
+    theme: leonids
+    highlight: github
+    df_print: paged
+---
+
+## Using Tidyverse to analyze Pew Research Center Survey data
+
+```{r results="asis",  echo=FALSE}
+cat('
+<style type="text/css"> 
+.sourceCode { 
+    font-family: Fira Code Retina; 
+} 
+.cover {
+background-color: rgba(15, 15, 15, 1)
+}
+
+th {
+background-color: rgba(0, 175, 214, 1)
+}
+
+.pagedtable-header-type {
+color : rgba(214, 214, 214, 1)
+}
+
+h2, h3 {
+color: rgba(0, 175, 214, 1)
+}
+
+</style>
+')
+```
+
+
+
+### Loading the packages: 
+
+haven is the tidyverse's solution for importing and exporting data from several different formats. We will be importing a SPSS dataset. 
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(haven)
+library(hrbrthemes)
+library(scales)
+```
+
+### Lets read in the data:
+
+```{r}
+#we set user_na = TRUE to ensure that responses such as "Don't know" or "Refused" aren't automatically converted to missing values.
+Apr17_raw <- read_sav("D:\\Datasets\\R\\Survey\\Apr17 public.sav", user_na = TRUE) %>%
+  as_factor()
+
+Apr17_raw
+```
+
+This survey consists of 98 questions.
+
+Q1 asked respondents how strongly they approved of Trumps performance as president so far.
+q1a asked respondents how strongly they approved or disapproved.
+
+```{r}
+Apr17 <- Apr17_raw %>%
+  mutate(trump_approval = case_when(
+    q1 == "Approve" & q1a == "Very strongly" ~ "Strongly approve",
+    q1 == "Approve" & q1a != "Very strongly" ~ "Not strongly approve",
+    q1 == "Disapprove" & q1a == "Very strongly" ~ "Strongly disapprove",
+    q1 == "Disapprove" & q1a != "Very strongly" ~ "Not strongly disapprove",
+    q1 == "Don't know/Refused (VOL.)" | q1a == "Don't know/Refused (VOL.)" ~ "Refused"
+  ) %>%
+    fct_relevel("Strongly approve",
+                "Not strongly approve",
+                "Not strongly disapprove",
+                "Strongly disapprove",
+                "Refused"
+                )
+  )
+
+table(Apr17$trump_approval, Apr17$q1)
+```
+
+Lets see how the approval numbers breakdown accordgin to few demographic characteristics: educational attainment, race, generation and gender.
+
+```{r}
+Apr17 %>%
+  select(educ2, racethn, igender, gen5) %>%
+  summary()
+```
+
+Educational attainment has 9 categories, and some of them do not have may responses. We can collapse the categories with the low responses into few categories with higher respondents.
+
+```{r}
+levels(Apr17$educ2)
+```
+
+```{r}
+Apr17 <- Apr17 %>%
+  mutate(edu_cat = fct_collapse(educ2,
+                                "High school graduate or less" = c(
+                                  "Less than high school (Grades 1-8 or no formal schooling)",
+                                  "High school incomplete (Grades 9-11 or Grade 12 with NO diploma)",
+                                  "High school graduate (Grade 12 with diploma or GED certificate)"
+                                ),
+                                
+                                "Some college" = c(
+                                  "Some college, no degree (includes some community college)",
+                                  "Two year associate degree from a college or university"
+                                ),
+                                
+                                "College grad" = c(
+                                  "Four year college or university degree/Bachelor's degree (e.g., BS, BA, AB)",
+                                  "Some postgraduate or professional schooling, no postgraduate degree",
+                                  "Postgraduate or professional degree, including master's, doctorate, medical or law degree"
+                                )
+                                )
+         ) #closes mutate
+
+
+table(Apr17$edu_cat, Apr17$q1)
+```
+
+### Getting weighted esitmates with group_by and summarise
+
+With the re-coding of variables that we want to estimate, we can now produce some weighted summaries of the data. To make sure that our estimates are representative of the populations, we need to use the survey weights included in our dataset. For the total sample, we can calculate weighted percentages by adding up the respondent weights for each category and dividing by the sum of the weights for thw whole sample.
+
+```{r}
+trump_approval <- Apr17 %>%
+  group_by(trump_approval) %>%
+  summarise(weighted_n = sum(weight))
+
+trump_approval
+```
+
+```{r}
+trump_approval %>%
+  mutate(percent = weighted_n/sum(weighted_n)) %>%
+  ggplot(aes(trump_approval, percent)) +
+  geom_col(fill = "#4CB5F5") +
+  scale_y_continuous(labels = percent_format()) +
+  coord_flip() +
+  ggtitle("Approval rating of Trumps performance as President") +
+  theme_ipsum_rc() 
+```
+
+To see how this breaksdown for different groups we could use facet_wrap.
+
+### Breakdown by educational attainments:
+
+```{r fig.width=13, fig.height=9}
+trump_estimates_educ <- Apr17 %>%
+  group_by(trump_approval, edu_cat) %>%
+  summarise(weighted_n = sum(weight)) %>%
+  group_by(edu_cat) %>%
+  mutate(percent = weighted_n/sum(weighted_n)) %>%
+  ggplot(aes(trump_approval, percent)) +
+  geom_col(fill = "#4CB5F5") +
+  scale_y_continuous(labels = percent_format()) +
+  coord_flip() +
+  facet_wrap(~edu_cat, scales="free_y") +
+  ggtitle("Approval rate of Trumps performance break-down by Educational attainments") +
+  theme_ipsum_rc() 
+
+trump_estimates_educ
+```
+
+### Breakdown by Race/ethnicity
+
+```{r fig.width=13, fig.height=9}
+trump_estimates_race<- Apr17 %>%
+  group_by(trump_approval, racethn) %>%
+  summarise(weighted_n = sum(weight)) %>%
+  group_by(racethn) %>%
+  mutate(percent = weighted_n/sum(weighted_n)) %>%
+  ggplot(aes(trump_approval, percent)) +
+  geom_col(fill = "#4CB5F5") +
+  scale_y_continuous(labels = percent_format()) +
+  coord_flip() +
+  facet_wrap(~racethn, scales="free_y") +
+  ggtitle("Approval rate of Trumps performance break-down by Race/Ethnicity") +
+  theme_ipsum_rc() 
+
+trump_estimates_race
+```
+
+### Breakdown by Gender
+
+```{r fig.width=13, fig.height=6}
+trump_estimates_gender <- Apr17 %>%
+  group_by(trump_approval, igender) %>%
+  summarise(weighted_n = sum(weight)) %>%
+  group_by(igender) %>%
+  mutate(percent = weighted_n/sum(weighted_n)) %>%
+  ggplot(aes(trump_approval, percent)) +
+  geom_col(fill = "#4CB5F5") +
+  scale_y_continuous(labels = percent_format()) +
+  coord_flip() +
+  facet_wrap(~igender, scales="free_y") +
+  ggtitle("Approval rate of Trumps performance break-down by Gender") +
+  theme_ipsum_rc() 
+
+trump_estimates_gender
+```
+
